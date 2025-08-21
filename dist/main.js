@@ -92,6 +92,10 @@ const crawler = new PlaywrightCrawler({
             const transmission = (bodyText.match(/Automata|Manuala|CVT|dublu ambreiaj/i)?.[0] || '').trim();
             const drivetrain = (bodyText.match(/4x4|Fata|Spate/i)?.[0] || '').trim();
             const bodyType = (bodyText.match(/SUV|Sedan|Combi|Cabrio|Compacta|Coupe|Monovolum/i)?.[0] || '').trim();
+            // Extract VIN (Vehicle Identification Number). A VIN consists of 17
+            // uppercase letters and digits excluding I, O and Q. We look for
+            // 'VIN' followed by the 17‑character identifier in the page text.
+            const vin = bodyText.match(/VIN\s*([A-HJ-NPR-Z0-9]{17})/i)?.[1] || undefined;
             /*
              * Collect a rich set of features from the detail page.
              *
@@ -179,6 +183,7 @@ const crawler = new PlaywrightCrawler({
                 vatType: /TVA\s+deductibil/i.test(html) ? 'deductibil' : (/TVA\s+nedeductibil/i.test(html) ? 'nedeductibil' : 'necunoscut'),
                 features: Array.from(new Set(features)).slice(0, 200),
                 images: images.slice(0, 24),
+                vin,
             };
             // Only push to dataset if we have a stock ID. Without one the car
             // cannot be uniquely identified.
