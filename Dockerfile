@@ -15,7 +15,4 @@ RUN npm ci --include=dev
 COPY src ./src
 RUN npm run build
 
-# Switch back to the default non-root user
-USER actor
-
 CMD ["node", "dist/main.js"]
