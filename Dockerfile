@@ -3,20 +3,24 @@
 # avoids runtime errors when the crawler attempts to launch a headless browser on
 # the Apify platform. See the Apify documentation for details【850153556570037†L120-L134】.
 FROM apify/actor-node-playwright-chrome:latest
-WORKDIR /app
-# Copy package files and tsconfig with ownership set to `myuser`. Without
-# `--chown`, Docker copies files as root, which causes permission errors when
-# installing dependencies under the non-root user used in Apify base images.
-# See Apify Academy tutorial on avoiding EACCES errors【623042132476881†L84-L105】.
-COPY --chown=myuser:myuser package*.json tsconfig.json ./
 
-# Install dependencies including dev dependencies. We use `npm install` instead
-# of `npm ci` because the repository does not ship with a package-lock.json.
-# Installing with `--include=dev` ensures the TypeScript compiler is present even when
-# NODE_ENV=production (Apify builds default to production mode).
+# Run installation and build steps as root to avoid EACCES permission errors when
+# creating node_modules. See Apify documentation for recommended patterns【850153556570037†L120-L134】.
+USER root
+WORKDIR /app
+
+# Copy package files and tsconfig
+COPY package*.json tsconfig.json ./
+
+# Install all dependencies (including dev dependencies). We use `npm install` instead of `npm ci`
+# because this project does not include a package-lock.json. The `--include=dev` flag ensures
+# TypeScript and other dev dependencies are available during the build even when NODE_ENV is production.
 RUN npm install --include=dev
 
-# Copy source code with correct ownership
-COPY --chown=myuser:myuser src ./src
+# Copy source files and compile the TypeScript
+COPY src ./src
 RUN npm run build
+
+# Use root for the runtime as well. Apify containers are sandboxed, so this is safe and avoids
+# user mismatches when launching the crawler.
 CMD ["node", "dist/main.js"]
