@@ -10,9 +10,11 @@ WORKDIR /app
 # See Apify Academy tutorial on avoiding EACCES errors【623042132476881†L84-L105】.
 COPY --chown=myuser:myuser package*.json tsconfig.json ./
 
-# Install dependencies as the default non-root user (myuser). With the files
-# owned by `myuser`, `npm ci` can create `node_modules` without EACCES errors.
-RUN npm ci
+# Install dependencies including dev dependencies. We use `npm install` instead
+# of `npm ci` because the repository does not ship with a package-lock.json.
+# Installing with `--include=dev` ensures the TypeScript compiler is present even when
+# NODE_ENV=production (Apify builds default to production mode).
+RUN npm install --include=dev
 
 # Copy source code with correct ownership
 COPY --chown=myuser:myuser src ./src
