@@ -5,7 +5,8 @@
 FROM apify/actor-node-playwright-chrome:latest
 WORKDIR /app
 COPY package*.json tsconfig.json ./
-RUN npm ci
+# Run npm install in unsafe-perm mode to avoid EACCES permission errors
+RUN npm ci --unsafe-perm
 COPY src ./src
 RUN npm run build
 CMD ["node", "dist/main.js"]
