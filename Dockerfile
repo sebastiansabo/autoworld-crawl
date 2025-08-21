@@ -8,8 +8,8 @@ WORKDIR /app
 # Copy package manifests and tsconfig
 COPY package*.json tsconfig.json ./
 
-# Install dependencies as root
-RUN npm ci
+# Install dependencies as root, including devDependencies
+RUN npm ci --include=dev
 
 # Copy the source code and build
 COPY src ./src
