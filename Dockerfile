@@ -5,8 +5,11 @@
 FROM apify/actor-node-playwright-chrome:latest
 WORKDIR /app
 COPY package*.json tsconfig.json ./
-# Run npm install in unsafe-perm mode to avoid EACCES permission errors
-RUN npm ci --unsafe-perm
+# Configure npm to install dependencies as root with unsafe permissions.
+# Without this, npm tries to write to /app/node_modules as the default user and fails.
+RUN npm config set user root \
+    && npm config set unsafe-perm true \
+    && npm ci
 COPY src ./src
 RUN npm run build
 CMD ["node", "dist/main.js"]
