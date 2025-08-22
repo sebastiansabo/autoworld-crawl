@@ -196,8 +196,14 @@ async function main() {
       // detail pages. The paginator uses query string `?p=` so we allow the
       // crawler to follow those as well by not filtering them out.
       if (!request.label) {
-        await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-        await autoScroll(page, 40);
+        // On listing pages we must navigate to the requested URL rather than
+        // always using baseUrl. Using baseUrl here would reset pagination and
+        // cause the crawler to repeatedly load the first page. By using
+        // request.url we allow queued `?p=` pages to load correctly.
+        await page.goto(request.url, { waitUntil: 'domcontentloaded' });
+        // Scroll the listing to trigger lazy loading of all cards on the
+        // current page. Increase maxRounds to ensure all items are loaded.
+        await autoScroll(page, 50);
         await enqueueLinks({
           globs: ['**/stoc/?p=*', '**/stoc/*-ID*'],
           transformRequestFunction: (req) => {
