@@ -45,6 +45,10 @@ async function autoScroll(page: any, maxRounds = 30) {
  * (CarPlay, Android Auto, sensors, safety systems, etc.) and avoids generic
  * numbers or unrelated words.
  */
+// List of keywords that indicate a string describes a vehicle feature. We
+// intentionally include a broad set of automotive terms such as comfort,
+// safety and convenience items. Strings matching any of these keywords will
+// be considered features if they also do not match the reject list below.
 const FEATURE_KEYWORDS = new RegExp(
   [
     'Carplay',
@@ -77,7 +81,6 @@ const FEATURE_KEYWORDS = new RegExp(
     'Climat',
     'Port',
     'USB',
-    'Isofix',
     'Radio',
     'Naviga',
     'Sistem',
@@ -96,9 +99,11 @@ const FEATURE_KEYWORDS = new RegExp(
     'Electric',
     'Power',
     'Coti(er|era)',
-    'Tapițerie',
-    'Tapițerie',
-    'Tapițerie',
+    'Tapițer',
+    'Geamuri',
+    'Audio',
+    'ESP',
+    'ABS'
   ].join('|'),
   'i',
 );
@@ -282,8 +287,25 @@ async function main() {
             });
         }
 
-        // Limit to 200 features and convert to array.
+        // Limit to 200 features and convert to array. We aim for a large
+        // collection (often 15–20 items per car). Duplicate removal is
+        // handled by using a set.
         const features = Array.from(featuresSet).slice(0, 200);
+
+        // Extract "Descriere suplimentară" (additional description) if present.
+        let extraDescription = '';
+        try {
+          const descrHeading = $('*:contains("Descriere supliment")').filter((_i, el) => {
+            return /Descriere\s+supliment[aă]r[ăa]/i.test($(el).text());
+          }).first();
+          if (descrHeading && descrHeading.length) {
+            // The description is typically the next sibling paragraph or div.
+            const next = descrHeading.next();
+            extraDescription = next.text().trim();
+          }
+        } catch (err) {
+          // ignore parsing errors
+        }
 
         // Extract images. We look for images hosted on workleto or under /uploads.
         const images: { src: string; alt?: string }[] = [];
@@ -320,6 +342,7 @@ async function main() {
           vatType,
           vin,
           features,
+          extraDescription,
           images: images.slice(0, 24),
         };
         if (car.stockId) await Dataset.pushData(car);
