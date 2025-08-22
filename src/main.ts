@@ -210,28 +210,34 @@ async function main() {
         // Scroll the listing to trigger lazy loading of all cards on the
         // current page. Increase maxRounds to ensure all items are loaded.
         await autoScroll(page, 50);
-        // Enqueue both pagination links (e.g. ?p=2) and detail pages. We
-        // inspect every anchor on the page and decide whether to follow it.
+        // Enqueue detail pages from this listing. We iterate through all
+        // anchors and only follow links that match the DETAIL_HREF pattern.
         await enqueueLinks({
-          // Consider all anchors; we'll filter in transformRequestFunction
           selector: 'a',
           transformRequestFunction: (req) => {
             const url = req.url;
-            // Detail pages have a stock ID slug (e.g. -ID1234). Tag them so
-            // the handler knows to parse details.
             if (DETAIL_HREF.test(url)) {
               req.label = 'DETAIL';
               return req;
             }
-            // Follow pagination links like ?p=2, ?p=3, etc. Leave the label
-            // undefined so they are treated as listing pages.
-            if (url.includes('?p=')) {
-              return req;
-            }
-            // Ignore all other links (navigation, filters, etc.)
             return null;
           },
         });
+        // Queue only the next page if within the first three pages. The site
+        // uses query parameters like ?p=2 for pagination. We parse the
+        // current page number from the URL (defaulting to 1) and enqueue
+        // the next page if the current page is less than 3.
+        try {
+          const currentMatch = request.url.match(/\?p=(\d+)/);
+          const currentPage = currentMatch ? parseInt(currentMatch[1], 10) : 1;
+          if (currentPage < 3) {
+            const nextPage = currentPage + 1;
+            const nextUrl = `${baseUrl}?p=${nextPage}`;
+            await enqueueLinks({ urls: [nextUrl] });
+          }
+        } catch (err) {
+          // ignore errors when parsing page numbers
+        }
       } else if (request.label === 'DETAIL') {
         await page.goto(request.url, { waitUntil: 'domcontentloaded' });
         const html = await page.content();
