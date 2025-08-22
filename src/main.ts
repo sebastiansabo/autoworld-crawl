@@ -60,7 +60,10 @@ const crawler = new PlaywrightCrawler({
   async requestHandler({ page, request, enqueueLinks }) {
     // If no label is set on the request, treat it as the list page.
     if (!request.label) {
-      await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+      // Navigate to the requested list page (base or paginated). We don't
+      // always use baseUrl because pagination links include their own
+      // URLs such as ?page=2 or /stoc/2. Using request.url preserves that.
+      await page.goto(request.url, { waitUntil: 'domcontentloaded' });
       // Perform auto‑scroll to load all items on the list page
       await autoScroll(page, 30);
       // Enqueue all detail links. We use transformRequestFunction to
@@ -75,6 +78,28 @@ const crawler = new PlaywrightCrawler({
           return null;
         },
       });
+      // Discover pagination links on the current list page. Many listing
+      // pages provide numbered page links (e.g. "?page=2", "/stoc/2")
+      // or a "next" arrow. We extract all anchor hrefs containing a
+      // numeric page indicator and enqueue them as additional list page
+      // requests. Apify will automatically deduplicate URLs that have
+      // already been visited.
+      const paginationUrls: string[] = await page.evaluate(() => {
+        const anchors = Array.from(document.querySelectorAll('a')) as HTMLAnchorElement[];
+        const urls: string[] = [];
+        for (const a of anchors) {
+          const href = a.href;
+          if (!href) continue;
+          // Match common pagination patterns: ?page=2, ?p=3, /page/2, /stoc/2
+          if (/[?&](?:page|p)=\d+/i.test(href) || /\/page\/\d+/i.test(href) || /\/stoc\/\d+/.test(href)) {
+            urls.push(href);
+          }
+        }
+        return urls;
+      });
+      if (paginationUrls.length > 0) {
+        await enqueueLinks({ urls: paginationUrls });
+      }
     } else if (request.label === 'DETAIL') {
       // We are on a detail page. Wait for the DOM to load completely.
       await page.goto(request.url, { waitUntil: 'domcontentloaded' });
