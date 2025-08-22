@@ -1,17 +1,23 @@
 FROM apify/actor-node-playwright-chrome:latest
 
-# Install dependencies and build the TypeScript sources. The Playwright image
-# already includes the necessary browser binaries, so we don't need to run
-# `playwright install` separately. We install dev dependencies because
-# TypeScript is a dev dependency and the compiler is needed at build time.
+# Use the root user for installation to avoid EACCES errors when creating
+# node_modules. The default user in the base image is `actor`, which lacks
+# permissions to write to /app/node_modules. Running as root during the
+# build phase solves this issue.
+USER root
+
 WORKDIR /app
+
+# Copy package manifests and install dependencies, including devDeps so
+# TypeScript is available at build time. Running under the root user
+# prevents permission issues when creating the node_modules directory.
 COPY package*.json tsconfig.json ./
 RUN npm install --include=dev
 
-# Copy the source files and compile them to JavaScript.
+# Copy source code and compile to JavaScript. We leave the runtime user as
+# root because Apify runs the container in a sandboxed environment and
+# changing users mid-build can reintroduce permission problems.
 COPY src ./src
 RUN npm run build
 
-# Run the compiled script. Apify will set ENTRYPOINT for us but we keep the
-# command explicit for clarity.
 CMD ["node", "dist/main.js"]
