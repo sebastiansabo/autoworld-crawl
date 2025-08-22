@@ -198,45 +198,50 @@ async function main() {
     // Use Apify proxy if requested. This helps avoid blocks but is optional.
     proxyConfiguration: input.useApifyProxy ? await Actor.createProxyConfiguration() : undefined,
     async requestHandler({ page, request, enqueueLinks }) {
-      // Listing page handler: navigate to the requested URL, scroll to load
-      // all cards, extract all detail links, and optionally queue the next
-      // pagination page. We no longer rely on Crawlee's link extraction
-      // globs here because the paginator uses query strings that confuse
-      // glob patterns. Instead we parse the HTML ourselves.
+      // If no label then we are on a listing page. Scroll it and enqueue all
+      // detail pages. The paginator uses query string `?p=` so we allow the
+      // crawler to follow those as well by not filtering them out.
       if (!request.label) {
-        // Navigate to the requested listing page (do not reset to baseUrl).
+        // Listing page: navigate to the requested URL, scroll to load cards,
+        // extract detail links manually and queue the next page.
         await page.goto(request.url, { waitUntil: 'domcontentloaded' });
-        // Scroll down to load all cards (if any lazy loading is present).
         await autoScroll(page, 50);
-        // Parse the page content for detail links.
+        // Parse HTML to find all anchors and collect detail page URLs.
         const html = await page.content();
         const $ = cheerio.load(html);
         const detailUrls: string[] = [];
         $('a[href]').each((_i, el) => {
           const href = $(el).attr('href');
           if (!href) return;
-          // Match links like /stoc/<slug>-ID1234
           if (DETAIL_HREF.test(href)) {
             const abs = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
             detailUrls.push(abs);
           }
         });
-        // Enqueue all detail pages with label DETAIL. If there are no links,
-        // this call is a no-op. Crawlee will deduplicate duplicate URLs.
         if (detailUrls.length) {
           await enqueueLinks({ urls: detailUrls, label: 'DETAIL' });
         }
-        // Queue only the next listing page if within the first three pages.
+        // Determine the next page URL by incrementing the p parameter in the
+        // current URL's query string. Preserve other query parameters such as
+        // type=pc. Limit to a reasonable number of pages to avoid crawling
+        // endlessly. Adjust MAX_PAGES as needed.
         try {
-          const match = request.url.match(/\?p=(\d+)/);
-          const currentPage = match ? parseInt(match[1], 10) : 1;
-          if (currentPage < 3) {
+          const currentUrl = new URL(request.url);
+          const params = currentUrl.searchParams;
+          const currentPage = parseInt(params.get('p') || '1', 10) || 1;
+          // Set an upper bound on the number of pages to crawl. The site
+          // currently has fewer than 20 pages. Increase this if more pages
+          // are added in the future. A high limit prevents premature
+          // stopping while still avoiding infinite loops.
+          const MAX_PAGES = 20;
+          if (currentPage < MAX_PAGES) {
             const nextPage = currentPage + 1;
-            const nextUrl = `${baseUrl}?p=${nextPage}`;
+            params.set('p', nextPage.toString());
+            const nextUrl = `${currentUrl.origin}${currentUrl.pathname}?${params.toString()}`;
             await enqueueLinks({ urls: [nextUrl] });
           }
         } catch (err) {
-          // ignore page number parse errors
+          // ignore errors building next page URL
         }
       } else if (request.label === 'DETAIL') {
         await page.goto(request.url, { waitUntil: 'domcontentloaded' });

@@ -6,6 +6,11 @@ import * as cheerio from 'cheerio';
 // enqueue links we tag them with the label "DETAIL" so the request handler
 // knows how to parse them.
 const DETAIL_HREF = /\/stoc\/.*-ID\d+/i;
+// Keep track of stock IDs we've already processed. This prevents the crawler
+// from pushing the same vehicle multiple times (for example via "similar
+// models" links on detail pages). Once a stock ID is added to this set
+// we skip any subsequent occurrences.
+const seenStockIds = new Set();
 // Helper to wait for a given number of milliseconds. Used during auto
 // scrolling so that content can load before we inspect the page.
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -173,36 +178,45 @@ async function main() {
             // detail pages. The paginator uses query string `?p=` so we allow the
             // crawler to follow those as well by not filtering them out.
             if (!request.label) {
-                // On listing pages we must navigate to the requested URL rather than
-                // always using baseUrl. Using baseUrl here would reset pagination and
-                // cause the crawler to repeatedly load the first page. By using
-                // request.url we allow queued `?p=` pages to load correctly.
+                // Listing page: navigate to the requested URL, scroll to load cards,
+                // extract detail links manually and queue the next page.
                 await page.goto(request.url, { waitUntil: 'domcontentloaded' });
-                // Scroll the listing to trigger lazy loading of all cards on the
-                // current page. Increase maxRounds to ensure all items are loaded.
                 await autoScroll(page, 50);
-                // Enqueue both pagination links (e.g. ?p=2) and detail pages. We
-                // inspect every anchor on the page and decide whether to follow it.
-                await enqueueLinks({
-                    // Consider all anchors; we'll filter in transformRequestFunction
-                    selector: 'a',
-                    transformRequestFunction: (req) => {
-                        const url = req.url;
-                        // Detail pages have a stock ID slug (e.g. -ID1234). Tag them so
-                        // the handler knows to parse details.
-                        if (DETAIL_HREF.test(url)) {
-                            req.label = 'DETAIL';
-                            return req;
-                        }
-                        // Follow pagination links like ?p=2, ?p=3, etc. Leave the label
-                        // undefined so they are treated as listing pages.
-                        if (url.includes('?p=')) {
-                            return req;
-                        }
-                        // Ignore all other links (navigation, filters, etc.)
-                        return null;
-                    },
+                // Parse HTML to find all anchors and collect detail page URLs.
+                const html = await page.content();
+                const $ = cheerio.load(html);
+                const detailUrls = [];
+                $('a[href]').each((_i, el) => {
+                    const href = $(el).attr('href');
+                    if (!href)
+                        return;
+                    if (DETAIL_HREF.test(href)) {
+                        const abs = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
+                        detailUrls.push(abs);
+                    }
                 });
+                if (detailUrls.length) {
+                    await enqueueLinks({ urls: detailUrls, label: 'DETAIL' });
+                }
+                // Determine the next page URL by incrementing the p parameter in the
+                // current URL's query string. Preserve other query parameters such as
+                // type=pc. Limit to a reasonable number of pages to avoid crawling
+                // endlessly. Adjust MAX_PAGES as needed.
+                try {
+                    const currentUrl = new URL(request.url);
+                    const params = currentUrl.searchParams;
+                    const currentPage = parseInt(params.get('p') || '1', 10) || 1;
+                    const MAX_PAGES = 10;
+                    if (currentPage < MAX_PAGES) {
+                        const nextPage = currentPage + 1;
+                        params.set('p', nextPage.toString());
+                        const nextUrl = `${currentUrl.origin}${currentUrl.pathname}?${params.toString()}`;
+                        await enqueueLinks({ urls: [nextUrl] });
+                    }
+                }
+                catch (err) {
+                    // ignore errors building next page URL
+                }
             }
             else if (request.label === 'DETAIL') {
                 await page.goto(request.url, { waitUntil: 'domcontentloaded' });
@@ -236,7 +250,24 @@ async function main() {
                 const transmission = (bodyText.match(/Automata|Manuala|CVT|dublu ambreiaj/i)?.[0] || '').trim();
                 const drivetrain = (bodyText.match(/4x4|Fata|Spate/i)?.[0] || '').trim();
                 const bodyType = (bodyText.match(/SUV|Sedan|Combi|Cabrio|Compacta|Coupe|Monovolum/i)?.[0] || '').trim();
-                const color = (bodyText.match(/Culoare\s*\n?\s*([A-Za-zĂÂÎȘȚăâîșț\s]+)/i)?.[1] || '').trim();
+                // Extract the colour. Capture only the portion after "Culoare" up
+                // until the next field (typically "An fabricare"). We use a
+                // lookahead to stop the match when the words "An fabricare" or a
+                // newline are encountered. As a fallback we reuse the older pattern.
+                let color = '';
+                try {
+                    const match = bodyText.match(/Culoare\s*[:\s]*([A-Za-zĂÂÎȘȚăâîșț ,.]+?)(?=\s+An\s+fabricare|\n)/i);
+                    color = (match?.[1] || '').trim();
+                    if (!color) {
+                        const fallback = bodyText.match(/Culoare\s*\n?\s*([A-Za-zĂÂÎȘȚăâîșț\s]+)/i);
+                        color = (fallback?.[1] || '').trim();
+                    }
+                    // Remove any trailing "An fabricare" text if captured
+                    color = color.replace(/An\s*fabricare.*$/i, '').trim();
+                }
+                catch (err) {
+                    color = '';
+                }
                 // VAT status is indicated as "TVA deductibil" or "TVA nedeductibil".
                 const vatType = /TVA\s+deductibil/i.test(html)
                     ? 'deductibil'
@@ -336,8 +367,14 @@ async function main() {
                     extraDescription,
                     images: images.slice(0, 24),
                 };
-                if (car.stockId)
-                    await Dataset.pushData(car);
+                // Push the record only if we haven't already processed this stock ID.
+                if (car.stockId) {
+                    if (seenStockIds.has(car.stockId)) {
+                        return;
+                    }
+                    seenStockIds.add(car.stockId);
+                }
+                await Dataset.pushData(car);
             }
         },
         maxRequestsPerCrawl: maxCars,
