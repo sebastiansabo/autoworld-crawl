@@ -99,7 +99,9 @@ function cleanColour(rawColour: string): string {
 // asynchronous context so that we can await its completion.
 await Actor.init();
 
-const input = (await Actor.getInput()) || {};
+// Read actor input. Casting to any avoids TypeScript complaining about
+// unknown properties such as ``baseUrl`` when no schema is defined.
+const input: any = (await Actor.getInput()) || {};
 const baseUrl: string = input.baseUrl || 'https://www.autoworldgrup.ro/stoc';
 
 const crawler = new PlaywrightCrawler({
