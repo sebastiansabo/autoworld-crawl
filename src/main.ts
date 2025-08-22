@@ -204,14 +204,26 @@ async function main() {
         // Scroll the listing to trigger lazy loading of all cards on the
         // current page. Increase maxRounds to ensure all items are loaded.
         await autoScroll(page, 50);
+        // Enqueue both pagination links (e.g. ?p=2) and detail pages. We
+        // inspect every anchor on the page and decide whether to follow it.
         await enqueueLinks({
-          globs: ['**/stoc/?p=*', '**/stoc/*-ID*'],
+          // Consider all anchors; we'll filter in transformRequestFunction
+          selector: 'a',
           transformRequestFunction: (req) => {
-            // If this link matches a detail page then label it so we parse it.
-            if (DETAIL_HREF.test(req.url)) {
+            const url = req.url;
+            // Detail pages have a stock ID slug (e.g. -ID1234). Tag them so
+            // the handler knows to parse details.
+            if (DETAIL_HREF.test(url)) {
               req.label = 'DETAIL';
+              return req;
             }
-            return req;
+            // Follow pagination links like ?p=2, ?p=3, etc. Leave the label
+            // undefined so they are treated as listing pages.
+            if (url.includes('?p=')) {
+              return req;
+            }
+            // Ignore all other links (navigation, filters, etc.)
+            return null;
           },
         });
       } else if (request.label === 'DETAIL') {
