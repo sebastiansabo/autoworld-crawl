@@ -18,6 +18,12 @@ interface Input {
 // knows how to parse them.
 const DETAIL_HREF = /\/stoc\/.*-ID\d+/i;
 
+// Keep track of stock IDs we've already processed. This prevents the crawler
+// from pushing the same vehicle multiple times (for example via "similar
+// models" links on detail pages). Once a stock ID is added to this set
+// we skip any subsequent occurrences.
+const seenStockIds = new Set<string>();
+
 // Helper to wait for a given number of milliseconds. Used during auto
 // scrolling so that content can load before we inspect the page.
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -262,7 +268,23 @@ async function main() {
         const transmission = (bodyText.match(/Automata|Manuala|CVT|dublu ambreiaj/i)?.[0] || '').trim();
         const drivetrain = (bodyText.match(/4x4|Fata|Spate/i)?.[0] || '').trim();
         const bodyType = (bodyText.match(/SUV|Sedan|Combi|Cabrio|Compacta|Coupe|Monovolum/i)?.[0] || '').trim();
-        const color = (bodyText.match(/Culoare\s*\n?\s*([A-Za-zĂÂÎȘȚăâîșț\s]+)/i)?.[1] || '').trim();
+        // Extract the colour. Capture only the portion after "Culoare" up
+        // until the next field (typically "An fabricare"). We use a
+        // lookahead to stop the match when the words "An fabricare" or a
+        // newline are encountered. As a fallback we reuse the older pattern.
+        let color = '';
+        try {
+          const match = bodyText.match(/Culoare\s*[:\s]*([A-Za-zĂÂÎȘȚăâîșț ,.]+?)(?=\s+An\s+fabricare|\n)/i);
+          color = (match?.[1] || '').trim();
+          if (!color) {
+            const fallback = bodyText.match(/Culoare\s*\n?\s*([A-Za-zĂÂÎȘȚăâîșț\s]+)/i);
+            color = (fallback?.[1] || '').trim();
+          }
+          // Remove any trailing "An fabricare" text if captured
+          color = color.replace(/An\s*fabricare.*$/i, '').trim();
+        } catch (err) {
+          color = '';
+        }
 
         // VAT status is indicated as "TVA deductibil" or "TVA nedeductibil".
         const vatType = /TVA\s+deductibil/i.test(html)
@@ -363,7 +385,14 @@ async function main() {
           extraDescription,
           images: images.slice(0, 24),
         };
-        if (car.stockId) await Dataset.pushData(car);
+        // Push the record only if we haven't already processed this stock ID.
+        if (car.stockId) {
+          if (seenStockIds.has(car.stockId)) {
+            return;
+          }
+          seenStockIds.add(car.stockId);
+        }
+        await Dataset.pushData(car);
       }
     },
     maxRequestsPerCrawl: maxCars,
