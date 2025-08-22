@@ -198,45 +198,45 @@ async function main() {
     // Use Apify proxy if requested. This helps avoid blocks but is optional.
     proxyConfiguration: input.useApifyProxy ? await Actor.createProxyConfiguration() : undefined,
     async requestHandler({ page, request, enqueueLinks }) {
-      // If no label then we are on a listing page. Scroll it and enqueue all
-      // detail pages. The paginator uses query string `?p=` so we allow the
-      // crawler to follow those as well by not filtering them out.
+      // Listing page handler: navigate to the requested URL, scroll to load
+      // all cards, extract all detail links, and optionally queue the next
+      // pagination page. We no longer rely on Crawlee's link extraction
+      // globs here because the paginator uses query strings that confuse
+      // glob patterns. Instead we parse the HTML ourselves.
       if (!request.label) {
-        // On listing pages we must navigate to the requested URL rather than
-        // always using baseUrl. Using baseUrl here would reset pagination and
-        // cause the crawler to repeatedly load the first page. By using
-        // request.url we allow queued `?p=` pages to load correctly.
+        // Navigate to the requested listing page (do not reset to baseUrl).
         await page.goto(request.url, { waitUntil: 'domcontentloaded' });
-        // Scroll the listing to trigger lazy loading of all cards on the
-        // current page. Increase maxRounds to ensure all items are loaded.
+        // Scroll down to load all cards (if any lazy loading is present).
         await autoScroll(page, 50);
-        // Enqueue detail pages from this listing. We iterate through all
-        // anchors and only follow links that match the DETAIL_HREF pattern.
-        await enqueueLinks({
-          selector: 'a',
-          transformRequestFunction: (req) => {
-            const url = req.url;
-            if (DETAIL_HREF.test(url)) {
-              req.label = 'DETAIL';
-              return req;
-            }
-            return null;
-          },
+        // Parse the page content for detail links.
+        const html = await page.content();
+        const $ = cheerio.load(html);
+        const detailUrls: string[] = [];
+        $('a[href]').each((_i, el) => {
+          const href = $(el).attr('href');
+          if (!href) return;
+          // Match links like /stoc/<slug>-ID1234
+          if (DETAIL_HREF.test(href)) {
+            const abs = href.startsWith('http') ? href : new URL(href, baseUrl).toString();
+            detailUrls.push(abs);
+          }
         });
-        // Queue only the next page if within the first three pages. The site
-        // uses query parameters like ?p=2 for pagination. We parse the
-        // current page number from the URL (defaulting to 1) and enqueue
-        // the next page if the current page is less than 3.
+        // Enqueue all detail pages with label DETAIL. If there are no links,
+        // this call is a no-op. Crawlee will deduplicate duplicate URLs.
+        if (detailUrls.length) {
+          await enqueueLinks({ urls: detailUrls, label: 'DETAIL' });
+        }
+        // Queue only the next listing page if within the first three pages.
         try {
-          const currentMatch = request.url.match(/\?p=(\d+)/);
-          const currentPage = currentMatch ? parseInt(currentMatch[1], 10) : 1;
+          const match = request.url.match(/\?p=(\d+)/);
+          const currentPage = match ? parseInt(match[1], 10) : 1;
           if (currentPage < 3) {
             const nextPage = currentPage + 1;
             const nextUrl = `${baseUrl}?p=${nextPage}`;
             await enqueueLinks({ urls: [nextUrl] });
           }
         } catch (err) {
-          // ignore errors when parsing page numbers
+          // ignore page number parse errors
         }
       } else if (request.label === 'DETAIL') {
         await page.goto(request.url, { waitUntil: 'domcontentloaded' });
