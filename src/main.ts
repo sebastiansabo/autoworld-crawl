@@ -273,7 +273,17 @@ const crawler = new PlaywrightCrawler({
             compareAtPriceEur,
             vatType,
             color,
-            features: Array.from(featuresSet).slice(0, 200),
+            // Limit the number of feature entries per vehicle. Although the site
+            // can expose dozens of badges and list items, Shopify metafields
+            // become unwieldy if we store them all. Keeping the first 30
+            // ensures we capture the most relevant equipment without
+            // overflowing columns in the dataset or Shopify.  See the
+            // `dataset_autoworld-crawl_2025-08-22_14-16-17-659.xlsx` sample
+            // where some vehicles have over 40 features—limiting to 30 keeps
+            // the export tidy.  The order of insertion is preserved by
+            // `featuresSet`, so the earliest features listed on the page
+            // (usually the most important) are retained.
+            features: Array.from(featuresSet).slice(0, 30),
             extraDescription,
             images: images.slice(0, 24),
         });
